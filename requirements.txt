@@ -1,0 +1,15 @@
+aiogram==3.5.0
+python-dotenv
+apscheduler
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+SQLAlchemy[asyncio]==2.0.30
+asyncpg
+psycopg2-binary
+pytz
+exifread
+aiofiles
+pytest
+aiohttp
