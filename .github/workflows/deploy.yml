@@ -1,0 +1,60 @@
+name: Deploy to Production Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      # путь деплоя/логин/ip забираются из secrets!
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Create creds directory (for rsync)
+        run: mkdir -p gdrive_credentials
+
+      - name: Write Google Drive credentials from Secrets
+        run: |
+          echo "${{ secrets.GDRIVE_JOHN_JSON }}" > gdrive_credentials/john.json
+          echo "${{ secrets.GDRIVE_JANE_JSON }}" > gdrive_credentials/jane.json
+          # ...Повторить для каждого источника
+
+      - name: Sync project to server via rsync (excludes)
+        run: |
+          rsync -az --exclude '.git*' --exclude 'app/tests/' \
+            -e "ssh -o StrictHostKeyChecking=no" ./ \
+            ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:${{ env.DEPLOY_PATH }}/
+
+      - name: SSH Deploy - Restart Docker Compose with ENV
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} <<'EOF'
+            cd $DEPLOY_PATH
+            export BOT_TOKEN="${BOT_TOKEN}"
+            export TELEGRAM_CHANNEL_ID="${TELEGRAM_CHANNEL_ID}"
+            export POSTGRES_USER="${POSTGRES_USER}"
+            export POSTGRES_PASSWORD="${POSTGRES_PASSWORD}"
+            export POSTGRES_DB="${POSTGRES_DB}"
+            docker compose pull || true
+            docker compose build
+            docker compose down
+            docker compose up -d
+EOF
