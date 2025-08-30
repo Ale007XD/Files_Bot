@@ -1,0 +1,15 @@
+sources:
+  - source_id: "gdrive_john"
+    credentials_path: "/app/gdrive_credentials/john.json"
+    drive_folders: 
+      - "FOLDER_ID1"
+    author_tag: "#john"
+    filters:
+      min_size: 100000
+      include_mime: ["image/", "video/"]
+
+  - source_id: "gdrive_jane"
+    credentials_path: "/app/gdrive_credentials/jane.json"
+    drive_folders: 
+      - "FOLDER_ID2"
+    author_tag: "#jane"
