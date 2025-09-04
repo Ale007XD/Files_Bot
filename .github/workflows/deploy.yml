@@ -70,7 +70,7 @@ jobs:
 
             echo "### 3. Starting new containers with secrets from stdin... ###"
             # Ключевая команда: --env-file - читает переменные из stdin (из пайплайна)
-            docker compose --env-file - up -d
+            # docker compose --env-file - up -d
 
             echo "### 4. Deployment successful! Showing running containers: ###"
             docker compose ps
