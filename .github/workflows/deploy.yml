@@ -40,6 +40,7 @@ jobs:
 
       - name: Sync project to server via rsync (excludes)
         run: |
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "mkdir -p $DEPLOY_PATH && chown $SERVER_USER:$SERVER_USER $DEPLOY_PATH" #новая строка
           rsync -az --exclude '.git*' --exclude 'app/tests/' \
             -e "ssh -o StrictHostKeyChecking=no" ./ \
             ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:${{ env.DEPLOY_PATH }}/
