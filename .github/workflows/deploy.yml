@@ -1,5 +1,4 @@
-name: Deploy to Production Server
-
+name: Deploy to Production Server (Secure, No .env file)
 on:
   push:
     branches:
@@ -10,14 +9,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      # Переменные для SSH-подключения и путей
       SERVER_USER: ${{ secrets.SERVER_USER }}
       SERVER_HOST: ${{ secrets.SERVER_HOST }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,7 +23,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Create creds directory (for rsync)
+      - name: Create creds directory (if needed for rsync)
         run: mkdir -p gdrive_credentials
 
       - name: Write Google Drive credentials from Secrets
@@ -39,23 +35,56 @@ jobs:
       - name: Ensure deploy path exists & set ownership
         run: |
           ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} \
-            "mkdir -p $DEPLOY_PATH && chown $SERVER_USER:$SERVER_USER $DEPLOY_PATH"
+            "mkdir -p ${{ env.DEPLOY_PATH }} && chown ${{ env.SERVER_USER }}:${{ env.SERVER_USER }} ${{ env.DEPLOY_PATH }}"
 
-      - name: Sync project to server via rsync (excludes)
+      - name: Sync project to server via rsync
         run: |
-          rsync -az --exclude '.git*' --exclude 'app/tests/' \
+          rsync -az --info=progress2 --delete \
+            --exclude '.git*' --exclude 'app/tests/' --exclude '.github/' \
             -e "ssh -o StrictHostKeyChecking=no" ./ \
             ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:${{ env.DEPLOY_PATH }}/
 
-      - name: SSH Deploy - Restart Docker Compose with ENV
+      - name: Deploy and Restart Services via stdin pipe
+        id: deploy_step
+        # Эта секция передает секреты через stdin напрямую в docker-compose
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "
-            cd $DEPLOY_PATH
-            BOT_TOKEN='${BOT_TOKEN}' TELEGRAM_CHANNEL_ID='${TELEGRAM_CHANNEL_ID}' \
-            POSTGRES_USER='${POSTGRES_USER}' POSTGRES_PASSWORD='${POSTGRES_PASSWORD}' \
-            POSTGRES_DB='${POSTGRES_DB}' \
+          (
+            echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}"
+            echo "TELEGRAM_CHANNEL_ID=${{ secrets.TELEGRAM_CHANNEL_ID }}"
+            echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}"
+            echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}"
+            echo "POSTGRES_DB=${{ secrets.POSTGRES_DB }}"
+          ) | ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} 'bash -s' << 'EOF'
+            # Включить подробный вывод команд и остановку при ошибке.
+            # Это безопасно, так как секреты не являются частью команд.
+            set -ex
+
+            # Перейти в директорию проекта
+            cd ${{ env.DEPLOY_PATH }}
+
+            echo "### 1. Pulling latest images... ###"
             docker compose pull
-            docker compose build
-            docker compose down
-            docker compose up -d
+
+            echo "### 2. Stopping and removing old containers... ###"
+            docker compose down --remove-orphans
+
+            echo "### 3. Starting new containers with secrets from stdin... ###"
+            # Ключевая команда: --env-file - читает переменные из stdin (из пайплайна)
+            docker compose --env-file - up -d
+
+            echo "### 4. Deployment successful! Showing running containers: ###"
+            docker compose ps
+          EOF
+
+      - name: Show Docker logs on failure
+        # Этот шаг выполняется, только если предыдущий шаг ('deploy_step') завершился с ошибкой
+        if: failure()
+        run: |
+          echo "🔴 Deployment failed. Fetching application logs from server..."
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "
+            cd ${{ env.DEPLOY_PATH }}
+            echo '--- Docker container statuses (docker compose ps -a) ---'
+            docker compose ps -a
+            echo '--- Last 50 lines of logs from each container (docker compose logs) ---'
+            docker compose logs --tail=50
           "
